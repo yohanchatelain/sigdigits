@@ -59,7 +59,7 @@ def change_base(sig, base):
     return to_base(sig_power2)
 
 
-def compute_z(array, reference, precision, shuffle_samples=False):
+def compute_z(array, reference, precision, axis=0, shuffle_samples=False):
     """
     X = array
     Y = reference
@@ -73,8 +73,7 @@ def compute_z(array, reference, precision, shuffle_samples=False):
         - X.ndim - 1 == Y.ndim
             Y is a scalar value 
     """
-
-    nb_samples = array.shape[0]
+    nb_samples = array.shape[axis]
 
     if reference is None:
         if nb_samples % 2 != 0:
@@ -111,13 +110,15 @@ def significant_digits_cnh(array,
                            precision,
                            probability,
                            confidence,
+                           axis=0,
                            shuffle_samples=False):
     """
     s >= -log_2(std) - [1/2 log2( (n-1)/(Chi^2_{1-alpha/2}) ) + log2( F^{-1}((p+1)/2)]
     """
-    z = compute_z(array, reference, precision, shuffle_samples=shuffle_samples)
-    nb_samples = z.shape[0]
-    std = np.std(z, axis=0, dtype=internal_dtype)
+    z = compute_z(array, reference, precision, axis=axis,
+                  shuffle_samples=shuffle_samples)
+    nb_samples = z.shape[axis]
+    std = np.std(z, axis=axis, dtype=internal_dtype)
     std0 = np.ma.masked_array(std == 0)
     chi2 = scipy.stats.chi2.ppf(1-confidence/2, nb_samples)
     inorm = scipy.stats.norm.ppf((probability+1)/2)
@@ -132,18 +133,21 @@ def significant_digits_general(array,
                                precision,
                                probability,
                                confidence,
+                               axis=0,
                                shuffle_samples=False):
     """
     s = max{k in [1,mant], st forall i in [1,n], |Z_i| <= 2^{-k}}
     """
-    z = compute_z(array, reference, precision, shuffle_samples=shuffle_samples)
+    z = compute_z(array, reference, precision, axis=axis,
+                  shuffle_samples=shuffle_samples)
 
-    sig = np.zeros(z.shape[1:])
+    sample_shape = tuple(dim for i, dim in enumerate(z.shape) if i != axis)
+    sig = np.zeros(sample_shape)
     max_bits = np.finfo(z.dtype).nmant
     for k in range(max_bits, 0, -1):
         pow2minusk = np.power(2, -np.float(k))
-        _z = np.all(np.abs(z) <= pow2minusk, axis=0)
-        z_mask = np.ma.masked_array(_z, axis=0, fill_value=k)
+        _z = np.all(np.abs(z) <= pow2minusk, axis=axis)
+        z_mask = np.ma.masked_array(_z, axis=axis, fill_value=k)
         sig[~z_mask] = k
         if np.all(z_mask):
             break
@@ -153,6 +157,7 @@ def significant_digits_general(array,
 
 def significant_digits(array,
                        reference=None,
+                       axis=0,
                        base=2,
                        precision=Precision.Relative,
                        method=Method.CNH,
@@ -166,20 +171,22 @@ def significant_digits(array,
     sig = None
 
     if method == Method.CNH:
-        sig = significant_digits_cnh(array,
-                                     reference,
-                                     precision,
-                                     probability,
-                                     confidence,
-                                     shuffle_samples)
+        sig = significant_digits_cnh(array=array,
+                                     reference=reference,
+                                     precision=precision,
+                                     probability=probability,
+                                     confidence=confidence,
+                                     axis=axis,
+                                     shuffle_samples=shuffle_samples)
 
     elif method == Method.General:
-        sig = significant_digits_general(array,
-                                         reference,
-                                         precision,
-                                         probability,
-                                         confidence,
-                                         shuffle_samples)
+        sig = significant_digits_general(array=array,
+                                         reference=reference,
+                                         precision=precision,
+                                         probability=probability,
+                                         confidence=confidence,
+                                         axis=axis,
+                                         shuffle_samples=shuffle_samples)
 
     if base != 2:
         sig = change_base(sig, base)
@@ -190,15 +197,17 @@ def significant_digits(array,
 def contributing_digits_cnh(array,
                             reference,
                             precision,
+                            axis=0,
                             probability=0.51,
                             confidence=default_confidence,
                             shuffle_samples=False):
     """
     c >= -log_2(std) - [1/2 log2( (n-1)/(Chi^2_{1-alpha/2}) ) + log2(p+1/2) + log2(2.sqrt(2.pi))]
     """
-    z = compute_z(array, reference, precision, shuffle_samples=shuffle_samples)
-    nb_samples = z.shape[0]
-    std = np.std(z, axis=0, dtype=internal_dtype)
+    z = compute_z(array, reference, precision, axis=axis,
+                  shuffle_samples=shuffle_samples)
+    nb_samples = z.shape[axis]
+    std = np.std(z, axis=axis, dtype=internal_dtype)
     std0 = np.ma.masked_array(std == 0)
     chi2 = scipy.stats.chi2.ppf(1-confidence/2, nb_samples)
     delta_chn = 0.5*np.log2((nb_samples - 1)/chi2) + \
@@ -211,6 +220,7 @@ def contributing_digits_cnh(array,
 def contributing_digits_general(array,
                                 reference,
                                 precision,
+                                axis=0,
                                 probability=default_contributing_probability,
                                 confidence=default_confidence,
                                 shuffle_samples=False):
@@ -219,14 +229,18 @@ def contributing_digits_general(array,
     c = (#success/#trials > 0.5)
     """
 
-    z = compute_z(array, reference, precision, shuffle_samples=shuffle_samples)
+    z = compute_z(array, reference, precision, axis=axis,
+                  shuffle_samples=shuffle_samples)
 
-    con = np.zeros(z.shape[1:])
+    nb_samples = z.shape[axis]
+    sample_shape = tuple(dim for i, dim in enumerate(z.shape) if i != axis)
+    con = np.zeros(sample_shape)
+    con = np.zeros([dim for i, dim in enumerate(z.shape) if i != axis])
     max_bits = np.finfo(z.dtype).nmant
-    z_mask = np.full(z.shape[1:], fill_value=True)
+    z_mask = np.full(sample_shape, fill_value=True)
     for k in range(1, max_bits+1):
         pow2k = np.power(2, k)
-        _z = np.sum(np.floor(pow2k*np.abs(z)) % 2 == 0, axis=0)/z.shape[0]
+        _z = np.sum(np.floor(pow2k*np.abs(z)) % 2 == 0, axis=axis)/nb_samples
         z_mask = z_mask & (_z > probability)
         con[z_mask] = k
 
@@ -235,6 +249,7 @@ def contributing_digits_general(array,
 
 def contributing_digits(array,
                         reference=None,
+                        axis=0,
                         base=2,
                         precision=Precision.Relative,
                         method=Method.CNH,
@@ -248,20 +263,22 @@ def contributing_digits(array,
     con = None
 
     if method == Method.CNH:
-        con = contributing_digits_cnh(array,
-                                      reference,
-                                      precision,
-                                      probability,
-                                      confidence,
-                                      shuffle_samples)
+        con = contributing_digits_cnh(array=array,
+                                      reference=reference,
+                                      precision=precision,
+                                      axis=axis,
+                                      probability=probability,
+                                      confidence=confidence,
+                                      shuffle_samples=shuffle_samples)
 
     elif method == Method.General:
-        con = contributing_digits_general(array,
-                                          reference,
-                                          precision,
-                                          probability,
-                                          confidence,
-                                          shuffle_samples)
+        con = contributing_digits_general(array=array,
+                                          reference=reference,
+                                          precision=precision,
+                                          axis=axis,
+                                          probability=probability,
+                                          confidence=confidence,
+                                          shuffle_samples=shuffle_samples)
 
     if base != 2:
         con = change_base(con, base)
