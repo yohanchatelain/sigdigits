@@ -54,9 +54,13 @@ def assert_is_confidence(confidence):
 
 
 def change_base(sig, base):
-    sig_power2 = np.power(2, -sig)
-    to_base = np.frompyfunc(lambda x: math.log(x, base))
-    return to_base(sig_power2)
+    sig_power2 = np.power(2, sig)
+
+    def to_base(x):
+        return math.log(x, base)
+    np_to_base = np.frompyfunc(to_base, 1, 1)
+    x = np_to_base(sig_power2)
+    return x
 
 
 def compute_z(array, reference, precision, axis=0, shuffle_samples=False):
@@ -96,9 +100,9 @@ def compute_z(array, reference, precision, axis=0, shuffle_samples=False):
         raise TypeError("No comparison found for X and reference:")
 
     if precision == Precision.Absolute:
-        z = array - reference
+        z = x - y
     elif precision == Precision.Relative:
-        z = array/reference - 1
+        z = x/y - 1
     else:
         raise Exception(f"Unknown precision {precision}")
 
@@ -120,11 +124,11 @@ def significant_digits_cnh(array,
     nb_samples = z.shape[axis]
     std = np.std(z, axis=axis, dtype=internal_dtype)
     std0 = np.ma.masked_array(std == 0)
-    chi2 = scipy.stats.chi2.ppf(1-confidence/2, nb_samples)
+    chi2 = scipy.stats.chi2.interval(confidence, nb_samples-1)[0]
     inorm = scipy.stats.norm.ppf((probability+1)/2)
     delta_chn = 0.5*np.log2((nb_samples - 1)/chi2) + np.log2(inorm)
     sig = -np.log2(std) - delta_chn
-    sig[std0] = np.finfo(z.dtype).nmant
+    sig[std0] = np.finfo(z.dtype).nmant - delta_chn
     return sig
 
 
@@ -209,11 +213,11 @@ def contributing_digits_cnh(array,
     nb_samples = z.shape[axis]
     std = np.std(z, axis=axis, dtype=internal_dtype)
     std0 = np.ma.masked_array(std == 0)
-    chi2 = scipy.stats.chi2.ppf(1-confidence/2, nb_samples)
+    chi2 = scipy.stats.chi2.interval(confidence, nb_samples-1)[0]
     delta_chn = 0.5*np.log2((nb_samples - 1)/chi2) + \
         np.log2(probability-0.5) + np.log2(2*np.sqrt(2*np.pi))
     con = -np.log2(std) - delta_chn
-    con[std0] = np.finfo(z.dtype).nmant
+    con[std0] = np.finfo(z.dtype).nmant - delta_chn
     return con
 
 
