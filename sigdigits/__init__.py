@@ -5,6 +5,7 @@ from enum import Enum
 import numpy as np
 import scipy
 import scipy.stats
+import warnings
 
 
 class Method(Enum):
@@ -75,7 +76,7 @@ def compute_z(array, reference, precision, axis=0, shuffle_samples=False):
             X and Y have the same dimension
             It it the case when Y is a random variable
         - X.ndim - 1 == Y.ndim
-            Y is a scalar value 
+            Y is a scalar value
     """
     nb_samples = array.shape[axis]
 
@@ -102,6 +103,9 @@ def compute_z(array, reference, precision, axis=0, shuffle_samples=False):
     if precision == Precision.Absolute:
         z = x - y
     elif precision == Precision.Relative:
+        if np.any(np.ma.masked_equal(y, 0)):
+            warnings.warn(
+                "Precision is set to relative and the reference contains 0 leading to NaN")
         z = x/y - 1
     else:
         raise Exception(f"Unknown precision {precision}")
@@ -145,17 +149,19 @@ def significant_digits_general(array,
     z = compute_z(array, reference, precision, axis=axis,
                   shuffle_samples=shuffle_samples)
 
+    z_nan_mask = np.ma.masked_invalid(z)
     sample_shape = tuple(dim for i, dim in enumerate(z.shape) if i != axis)
-    sig = np.zeros(sample_shape)
     max_bits = np.finfo(z.dtype).nmant
-    for k in range(max_bits, 0, -1):
+    sig = np.full(sample_shape, max_bits, dtype=np.float64)
+    for k in range(max_bits, -1, -1):
         pow2minusk = np.power(2, -np.float(k))
-        _z = np.all(np.abs(z) <= pow2minusk, axis=axis)
+        _z = np.all(np.abs(z_nan_mask) <= pow2minusk, axis=axis)
         z_mask = np.ma.masked_array(_z, axis=axis, fill_value=k)
         sig[~z_mask] = k
         if np.all(z_mask):
             break
 
+    sig[z_mask.mask] = np.nan
     return sig
 
 
